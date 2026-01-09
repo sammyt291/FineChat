@@ -3,4 +3,5 @@ version: ${version}
 main: org.finetree.finechat.FineChat
 api-version: "1.16"
 author: FineTree
+folia-supported: true
 softdepend: [Vault, PlaceholderAPI, LuckPerms, GroupManager]
