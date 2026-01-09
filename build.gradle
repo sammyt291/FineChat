@@ -41,7 +41,7 @@ shadowJar {
 
     minimize()
 
-    destinationDirectory = file('F:/plugins')
+    destinationDirectory = file("${buildDir}/libs")
 }
 
 def targetJavaVersion = 17
