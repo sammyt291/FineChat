@@ -1,0 +1,210 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '*.md'
+      - '.gitignore'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0) - leave empty for auto-increment'
+        required: false
+        type: string
+      bump_type:
+        description: 'Version bump type (if version not specified)'
+        required: false
+        type: choice
+        options:
+          - auto
+          - major
+          - minor
+          - patch
+        default: auto
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Skip if commit is from the bot (to avoid infinite loops)
+    if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, 'Release v')"
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+      
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+      
+      - name: Get current version from gradle.properties
+        id: current_version
+        run: |
+          CURRENT_VERSION=$(grep -E "^version=" gradle.properties | cut -d'=' -f2)
+          echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "Current version in gradle.properties: $CURRENT_VERSION"
+      
+      - name: Determine version bump type
+        id: bump_type
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ inputs.version }}" ]; then
+            echo "BUMP_TYPE=manual" >> $GITHUB_OUTPUT
+            echo "Using manual version: ${{ inputs.version }}"
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ inputs.bump_type }}" != "auto" ]; then
+            echo "BUMP_TYPE=${{ inputs.bump_type }}" >> $GITHUB_OUTPUT
+            echo "Using specified bump type: ${{ inputs.bump_type }}"
+          else
+            # Auto-detect from commit message
+            COMMIT_MSG="${{ github.event.head_commit.message }}"
+            if echo "$COMMIT_MSG" | grep -qiE "^feat|feature|new|add"; then
+              echo "BUMP_TYPE=minor" >> $GITHUB_OUTPUT
+              echo "Detected feature commit - minor bump"
+            elif echo "$COMMIT_MSG" | grep -qiE "^fix|bug|patch|hotfix"; then
+              echo "BUMP_TYPE=patch" >> $GITHUB_OUTPUT
+              echo "Detected bug fix commit - patch bump"
+            else
+              echo "BUMP_TYPE=patch" >> $GITHUB_OUTPUT
+              echo "Default to patch bump"
+            fi
+          fi
+      
+      - name: Calculate version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            # Use version from gradle.properties as base
+            CURRENT_VERSION="${{ steps.current_version.outputs.CURRENT_VERSION }}"
+            
+            # Parse version components
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+            MAJOR=${MAJOR:-0}
+            MINOR=${MINOR:-0}
+            PATCH=${PATCH:-0}
+            
+            BUMP_TYPE="${{ steps.bump_type.outputs.BUMP_TYPE }}"
+            
+            if [ "$BUMP_TYPE" == "major" ]; then
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+            elif [ "$BUMP_TYPE" == "minor" ]; then
+              MINOR=$((MINOR + 1))
+              PATCH=0
+            else
+              PATCH=$((PATCH + 1))
+            fi
+            
+            VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          fi
+          
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+      
+      - name: Update version in gradle.properties
+        run: |
+          sed -i "s/^version=.*/version=${{ steps.version.outputs.VERSION }}/" gradle.properties
+          echo "Updated gradle.properties to version ${{ steps.version.outputs.VERSION }}"
+          cat gradle.properties
+      
+      - name: Delete old jar files from build folder
+        run: |
+          rm -rf build/libs/*.jar
+          echo "Cleaned old jar files from build/libs"
+      
+      - name: Build shadow jar
+        run: ./gradlew shadowJar --no-daemon
+      
+      - name: Delete old jar files from root
+        run: |
+          rm -f FineChat*.jar
+          echo "Cleaned old jar files from root"
+      
+      - name: Copy jar to root
+        run: |
+          cp build/libs/FineChat-${{ steps.version.outputs.VERSION }}.jar ./FineChat-${{ steps.version.outputs.VERSION }}.jar
+          echo "Copied FineChat-${{ steps.version.outputs.VERSION }}.jar to root"
+      
+      - name: Commit version update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add gradle.properties
+          git commit -m "Release v${{ steps.version.outputs.VERSION }} [skip ci]" || echo "No changes to commit"
+          git push origin HEAD:${{ github.ref_name }}
+      
+      - name: Create tag
+        run: |
+          git tag -a "v${{ steps.version.outputs.VERSION }}" -m "Release v${{ steps.version.outputs.VERSION }}"
+          git push origin "v${{ steps.version.outputs.VERSION }}"
+      
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get the previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          echo "## What's Changed" > changelog.md
+          echo "" >> changelog.md
+          
+          if [ -n "$PREV_TAG" ]; then
+            echo "Changes since $PREV_TAG:" >> changelog.md
+            echo "" >> changelog.md
+            git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> changelog.md
+          else
+            echo "Initial release" >> changelog.md
+            echo "" >> changelog.md
+            git log --pretty=format:"- %s (%h)" --max-count=20 >> changelog.md
+          fi
+          
+          echo "" >> changelog.md
+          echo "" >> changelog.md
+          echo "---" >> changelog.md
+          echo "" >> changelog.md
+          echo "### Installation" >> changelog.md
+          echo "" >> changelog.md
+          echo "1. Download \`FineChat-${{ steps.version.outputs.VERSION }}.jar\`" >> changelog.md
+          echo "2. Place it in your server's \`plugins\` folder" >> changelog.md
+          echo "3. Restart your server" >> changelog.md
+          echo "" >> changelog.md
+          echo "### Requirements" >> changelog.md
+          echo "" >> changelog.md
+          echo "- Spigot/Paper 1.12.2 - 1.21.x" >> changelog.md
+          echo "- Java 17+" >> changelog.md
+          echo "- Optional: PlaceholderAPI, Vault, LuckPerms, GroupManager" >> changelog.md
+          
+          cat changelog.md
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          name: FineChat v${{ steps.version.outputs.VERSION }}
+          body_path: changelog.md
+          files: |
+            FineChat-${{ steps.version.outputs.VERSION }}.jar
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FineChat-${{ steps.version.outputs.VERSION }}
+          path: FineChat-${{ steps.version.outputs.VERSION }}.jar
+          retention-days: 30
