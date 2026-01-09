@@ -2,6 +2,7 @@ package org.finetree.finechat;
 
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.finetree.finechat.api.FineChatAPI;
 import org.finetree.finechat.chat.ChatFormatter;
 import org.finetree.finechat.chat.ChatListener;
 import org.finetree.finechat.config.ChatConfig;
@@ -44,6 +45,9 @@ public class FineChat extends JavaPlugin {
 
         ChatFormatter formatter = new ChatFormatter(groupManagerHook, vaultHook, luckPermsHook, placeholderHook);
 
+        // Initialize the API
+        FineChatAPI.init(this, formatter);
+
         Bukkit.getPluginManager().registerEvents(new ChatListener(scheduler, formatter), this);
 
         getLogger().info("FineChat enabled.");
@@ -51,6 +55,7 @@ public class FineChat extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        FineChatAPI.shutdown();
         getLogger().info("FineChat disabled.");
     }
 

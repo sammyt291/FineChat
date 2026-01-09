@@ -29,30 +29,81 @@ public class ChatFormatter {
         return s == null || s.trim().isEmpty();
     }
 
-    public String format(Player player, String rawMessage) {
+    /**
+     * Resolve the prefix for a player from all configured sources.
+     * Priority: GroupManager -> Vault -> LuckPerms
+     *
+     * @param player the player
+     * @return the resolved prefix (never null, may be empty)
+     */
+    public String resolvePrefix(Player player) {
         String prefix = "";
-        String suffix = "";
 
         // 1) GroupManager priority (if present)
         if (groupManager != null && groupManager.isPresent()) {
             String gmPrefix = groupManager.getPrefix(player);
-            String gmSuffix = groupManager.getSuffix(player);
-
             if (!isBlank(gmPrefix)) prefix = gmPrefix;
+        }
+
+        // 2) Vault fills missing values (if configured)
+        if (isBlank(prefix) && ChatConfig.preferVaultChat && vault != null && vault.isHooked()) {
+            prefix = vault.getPrefix(player);
+        }
+
+        // 3) LuckPerms fallback fills anything still missing (if configured)
+        if (isBlank(prefix) && ChatConfig.useLuckPermsGroupManager && luckPerms != null && luckPerms.isHooked()) {
+            prefix = luckPerms.getPrefix(player);
+        }
+
+        return prefix == null ? "" : prefix;
+    }
+
+    /**
+     * Resolve the suffix for a player from all configured sources.
+     * Priority: GroupManager -> Vault -> LuckPerms
+     *
+     * @param player the player
+     * @return the resolved suffix (never null, may be empty)
+     */
+    public String resolveSuffix(Player player) {
+        String suffix = "";
+
+        // 1) GroupManager priority (if present)
+        if (groupManager != null && groupManager.isPresent()) {
+            String gmSuffix = groupManager.getSuffix(player);
             if (!isBlank(gmSuffix)) suffix = gmSuffix;
         }
 
         // 2) Vault fills missing values (if configured)
-        if (ChatConfig.preferVaultChat && vault != null && vault.isHooked()) {
-            if (isBlank(prefix)) prefix = vault.getPrefix(player);
-            if (isBlank(suffix)) suffix = vault.getSuffix(player);
+        if (isBlank(suffix) && ChatConfig.preferVaultChat && vault != null && vault.isHooked()) {
+            suffix = vault.getSuffix(player);
         }
 
         // 3) LuckPerms fallback fills anything still missing (if configured)
-        if (ChatConfig.useLuckPermsGroupManager && luckPerms != null && luckPerms.isHooked()) {
-            if (isBlank(prefix)) prefix = luckPerms.getPrefix(player);
-            if (isBlank(suffix)) suffix = luckPerms.getSuffix(player);
+        if (isBlank(suffix) && ChatConfig.useLuckPermsGroupManager && luckPerms != null && luckPerms.isHooked()) {
+            suffix = luckPerms.getSuffix(player);
         }
+
+        return suffix == null ? "" : suffix;
+    }
+
+    public String format(Player player, String rawMessage) {
+        return format(player, rawMessage, null, null, null);
+    }
+
+    /**
+     * Format a chat message with optional overrides.
+     *
+     * @param player      the player
+     * @param rawMessage  the raw message
+     * @param prefixOverride override prefix (null to use resolved)
+     * @param suffixOverride override suffix (null to use resolved)
+     * @param formatOverride override format (null to use config)
+     * @return the formatted message
+     */
+    public String format(Player player, String rawMessage, String prefixOverride, String suffixOverride, String formatOverride) {
+        String prefix = prefixOverride != null ? prefixOverride : resolvePrefix(player);
+        String suffix = suffixOverride != null ? suffixOverride : resolveSuffix(player);
 
         String display = player.getDisplayName();
         String world = player.getWorld() != null ? player.getWorld().getName() : "";
@@ -81,14 +132,14 @@ public class ChatFormatter {
         }
 
         Map<String, String> vars = new HashMap<>();
-        vars.put("{prefix}", prefix == null ? "" : prefix);
-        vars.put("{suffix}", suffix == null ? "" : suffix);
+        vars.put("{prefix}", prefix);
+        vars.put("{suffix}", suffix);
         vars.put("{player}", player.getName());
         vars.put("{displayname}", display == null ? player.getName() : display);
         vars.put("{message}", processedMsg);
         vars.put("{world}", world);
 
-        String out = ChatConfig.format;
+        String out = formatOverride != null ? formatOverride : ChatConfig.format;
         for (var e : vars.entrySet()) {
             out = out.replace(e.getKey(), e.getValue());
         }

@@ -6,6 +6,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
+import org.finetree.finechat.api.event.FineChatFormatEvent;
 import org.finetree.finechat.config.ChatConfig;
 import org.finetree.finechat.scheduler.PlatformScheduler;
 
@@ -48,7 +49,30 @@ public class ChatListener implements Listener {
         scheduler.runSyncPlayer(sender, () -> {
             // Now do formatting logic off-thread
             scheduler.runAsync(() -> {
-                String formatted = formatter.format(sender, message);
+                // Resolve prefix/suffix for the event
+                String prefix = formatter.resolvePrefix(sender);
+                String suffix = formatter.resolveSuffix(sender);
+                String format = ChatConfig.format;
+
+                // Fire the API event (async)
+                FineChatFormatEvent formatEvent = new FineChatFormatEvent(
+                        true, sender, message, prefix, suffix, format
+                );
+                Bukkit.getPluginManager().callEvent(formatEvent);
+
+                // Check if cancelled
+                if (formatEvent.isCancelled()) {
+                    return;
+                }
+
+                // Use potentially modified values from the event
+                String formatted = formatter.format(
+                        sender,
+                        formatEvent.getMessage(),
+                        formatEvent.getPrefix(),
+                        formatEvent.getSuffix(),
+                        formatEvent.getFormat()
+                );
 
                 // Send back on the right threads
                 for (UUID uuid : recipients) {
