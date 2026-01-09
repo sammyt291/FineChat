@@ -1,0 +1,6 @@
+name: FineChat
+version: ${version}
+main: org.finetree.finechat.FineChat
+api-version: "1.16"
+author: FineTree
+softdepend: [Vault, PlaceholderAPI, LuckPerms, GroupManager]
